@@ -42,6 +42,48 @@ def convertxlsxToPed(fileIn,fileOut):
 		write.close()
 	except IOError: pass
 	return individuals
+def getPedFile(dataFolder,folder,family,logFile):
+	#Convert PED file and get individuals. If there's no PED file, it will try to make one (for trios only).
+	individuals=convertxlsxToPed(dataFolder + '/family.xlsx', folder + '/' + family+ '.ped')  #See if PED is in family folder
+	pedLocation=folder + '/' +  family + '.ped'
+	if len(individuals)==0: #IF no PED...
+		individuals=convertxlsxToPed('peds/' + family + '.xlsx', 'peds/' + family + '.ped') #See if PED is in general PED folder
+		if len(individuals)>0:
+			pedLocation='peds/' + family + '.ped'
+
+	if len(individuals)==0: #If no PED yet, try to make PED file
+		ok=False
+
+		if numBamFiles==3: #Trios only
+			for line in open(folder + '/' +  family + '.vcf'):#find names in VDF file
+
+				if line[:2]=='#C':
+	
+					individs=line.strip('\n').split('\t')[9:]
+	
+					#find mother, father, child
+					mother=''; father=''; child=''
+					for indv in individs:
+						if indv.find('1001')>0:
+							mother=indv
+						if indv.find('1000')>0:
+							father=indv
+						if indv.find('0001')>0:
+							child=indv
+					if len(mother)>0 and len(father)>0 and len(child)>0:
+						writePed=open(folder + '/' +  family + '.ped','w')
+						writePed.writelines('#family_id\tsample_id\tpaternal_id\tmaternal_id\tsex\tphenotype')
+						writePed.writelines('\n' + family + '\t' + father + '\t' + '-9' + '\t' + '-9' + '\t' + '1' + '\t' + '1')
+						writePed.writelines('\n' + family + '\t' + mother + '\t' + '-9' + '\t' + '-9' + '\t' + '2' + '\t' + '1')
+						writePed.writelines('\n' + family + '\t' + child + '\t' + father + '\t' + mother + '\t' + '-9' + '\t' + '2')
+						writePed.close()
+						ok=True
+						writeToLog(logFile,folder + ' PED file generated for default trio: ' + 'data/' + folder + '/' + family+ '.ped')
+		
+					break
+		if not ok:
+			writeToLog(logFile,dataFolder + ' - No family.xlsx found and no PED file could be generated')
+	return pedLocation,ok
 def writeToLog(logFile,toWrite):
 	r=[]
 	if os.path.isfile(logFile):
@@ -82,133 +124,102 @@ while go:
 			
 			
 				if family not in completed:
-				
+					
 					#Scan through all files, make sure not still copying. If still copying, leave this file for now
 					for i in ['0','1']:
 						vars()['files' + i]=dict()
 						for file in os.listdir(dataFolder):
 							vars()['files' + i][file] = os.path.getsize(dataFolder + '/' + file)
 						time.sleep(2)
-					allSame=True
+					ok=True
 					for file in files1.keys():
 						try:
 							if files1[file] != files0[file]:
-								allSame=False
-						except KeyError: 
-							allSame=False
-
-					if allSame:
-
-			
-			
-					
-						writeToLog(logFile,'Analyzing ' + family + '...')
-			
-						#Check for BAM files. If no BAM files, check for fastq files and map.
-						files = os.listdir(dataFolder)
-						bamFiles=""
-						numBamFiles=0
-						for file in files:
-
-							if file.split('.')[-1] == 'bam':
-
-								if len(bamFiles)>0:
-									bamFiles= bamFiles + ' '
-								bamFiles = bamFiles + dataFolder + '/' + file
-								numBamFiles+=1
-						if len(bamFiles)==0:
-							#figure out what mapping parameters Baylor uses. Copy those, make BAM from FASTQ
-							writeToLog(logFile,dataFolder + ' - No bam files found')
-						if len(bamFiles)>0:
-							
-							ok=True
-							
-							
-							#If no cutoffs.xlsx, add default
-							if not os.path.isfile(dataFolder + '/cutoffs.xlsx'):
-								copyfile('database/cutoffs.xlsx', 'data/' + family + '/cutoffs.xlsx')
-					
-							#Generate and annotate VCF file
-					
-							mpileupCommand='samtools mpileup -uf ' + genomeLocation + ' ' + bamFiles  + ' | bcftools view -bvcg - > var.raw.bcf'
-							writeToLog(logFile,mpileupCommand)
-							os.system(mpileupCommand)	
-					
-							bcftoolsCommand='bcftools view var.raw.bcf | vcfutils.pl varFilter -D100 > data/' + family + '/' +  family + '.vcf'
-						
-							writeToLog(logFile,bcftoolsCommand)
-							os.system(bcftoolsCommand)
-							
-							#Convert PED file and get individuals. If there's no PED file, it will try to make one (for trios only).
-							individuals=convertxlsxToPed(dataFolder + '/family.xlsx', folder + '/' + family+ '.ped')  #See if PED is in family folder
-							pedLocation=folder + '/' +  family + '.ped'
-							if len(individuals)==0: #IF no PED...
-								individuals=convertxlsxToPed('peds/' + family + '.xlsx', 'peds/' + family + '.ped') #See if PED is in general PED folder
-								if len(individuals)>0:
-									pedLocation='peds/' + family + '.ped'
-						
-							if len(individuals)==0: #If no PED yet, try to make PED file
 								ok=False
+						except KeyError: 
+							ok=False
+					
+					if ok:
+						writeToLog(logFile,'Analyzing ' + family + '...')
+						skipEarly=False
+						if os.path.isfile(folder  + '/' +  family  + '.vcf.gz'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
+							skipEarly=True
+							writeToLog(logFile,'Using previous vcf file for ' + family)
 						
-								if numBamFiles==3: #Trios only
-									for line in open(folder + '/' +  family + '.vcf'):#find names in VDF file
+						if not skipEarly:
+							
+			
+							#Check for BAM files. If no BAM files, check for fastq files and map.
+							files = os.listdir(dataFolder)
+							bamFiles=""
+							numBamFiles=0
+							for file in files:
+
+								if file.split('.')[-1] == 'bam':
+
+									if len(bamFiles)>0:
+										bamFiles= bamFiles + ' '
+									bamFiles = bamFiles + dataFolder + '/' + file
+									numBamFiles+=1
+							if len(bamFiles)==0:
+								#figure out what mapping parameters Baylor uses. Copy those, make BAM from FASTQ
+								writeToLog(logFile,dataFolder + ' - No bam files found')
+								ok=False
+							if len(bamFiles)>0:					
+							
 								
-										if line[:2]=='#C':
-									
-											individs=line.strip('\n').split('\t')[9:]
-									
-											#find mother, father, child
-											mother=''; father=''; child=''
-											for indv in individs:
-												if indv.find('1001')>0:
-													mother=indv
-												if indv.find('1000')>0:
-													father=indv
-												if indv.find('0001')>0:
-													child=indv
-											if len(mother)>0 and len(father)>0 and len(child)>0:
-												writePed=open(folder + '/' +  family + '.ped','w')
-												writePed.writelines('#family_id\tsample_id\tpaternal_id\tmaternal_id\tsex\tphenotype')
-												writePed.writelines('\n' + family + '\t' + father + '\t' + '-9' + '\t' + '-9' + '\t' + '1' + '\t' + '1')
-												writePed.writelines('\n' + family + '\t' + mother + '\t' + '-9' + '\t' + '-9' + '\t' + '2' + '\t' + '1')
-												writePed.writelines('\n' + family + '\t' + child + '\t' + father + '\t' + mother + '\t' + '-9' + '\t' + '2')
-												writePed.close()
-												ok=True
-												writeToLog(logFile,folder + ' PED file generated for default trio: ' + 'data/' + folder + '/' + family+ '.ped')
-										
-											break
-								if not ok:
-									writeToLog(logFile,dataFolder + ' - No family.xlsx found and no PED file could be generated')
+								#Generate and annotate VCF file
+					
+								mpileupCommand='samtools mpileup -uf ' + genomeLocation + ' ' + bamFiles  + ' | bcftools view -bvcg - > var.raw.bcf'
+								writeToLog(logFile,mpileupCommand)
+								os.system(mpileupCommand)	
+					
+								bcftoolsCommand='bcftools view var.raw.bcf | vcfutils.pl varFilter -D100 > data/' + family + '/' +  family + '.vcf'
 						
-							#Check if individs in vcf = PED. If not, try to rewrite PED.
-							if ok:
-								
+								writeToLog(logFile,bcftoolsCommand)
+								os.system(bcftoolsCommand)
+						if ok:	
+							#Get PED file
+							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile)
+							
+						
+						#TO DO: Check if individs in vcf = PED. If not, try to rewrite PED.
+						if ok:
+							if not skipEarly:
 								zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/  | vt decompose -s - | vt normalize -r ' + genomeLocation + ' - | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
 								writeToLog(logFile,zlessCommand)
-					
+				
 								os.system(zlessCommand)
-			
+		
 								tabixCommand='tabix -p vcf ' + folder  +  '/' +  family  + '.vcf.gz'
 								writeToLog(logFile,tabixCommand)
 								os.system(tabixCommand)
-			
-								os.remove('data/' + family  + '/' +  family  + '.vcf')
-							
-								geminiLoadCommand='gemini load --cores 4 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
 		
-								writeToLog(logFile,geminiLoadCommand)
-								os.system(geminiLoadCommand + ' > tempOut.txt')
-								for line in open('tempOut.txt'):
-									writeToLog(logFile,line.strip('\n'))
+								os.remove('data/' + family  + '/' +  family  + '.vcf')
+						
+							geminiLoadCommand='gemini load --cores 4 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
 	
-								#Filter variants
+							writeToLog(logFile,geminiLoadCommand)
+							os.system(geminiLoadCommand + ' > tempOut.txt')
+							#for line in open('tempOut.txt'):
+							#	writeToLog(logFile,line.strip('\n'))
+							if not os.path.isfile('db/'+ family  + '.db'):
+								ok=False
+								writeToLog(logFile,family + ' Gemini load failed')
+							#Filter variants
+							if ok:
+								#If no cutoffs.xlsx, add default
+								if not os.path.isfile(dataFolder + '/cutoffs.xlsx'):
+									copyfile('database/cutoffs.xlsx', 'data/' + family + '/cutoffs.xlsx')
+					
+								
 								os.system('gemini comp_hets db/'+ family  + '.db > data/'+ family  + '/' + 'recessiveUnfiltered.txt')
 								os.system('gemini autosomal_dominant db/'+ family  + '.db > data/'+ family  + '/' + 'dominantUnfiltered.txt')
 								os.system('gemini de_novo db/'+ family  + '.db > data/'+ family  + '/' + 'denovoUnfiltered.txt')
 								os.system('python filterVariants.py ' + family)
-								
+							
 								#output all annotated variants and add to universal database
-		
+	
 								writeToLog(logFile,family +' variants outputting to tmp/variants.txt')
 								os.system('gemini query -q \"select * from variants\" --header db/' + family + '.db > tmp/variants.txt')
 								pos=0
@@ -218,11 +229,11 @@ while go:
 									if pos==0:
 										head=line.strip('\n').split('\t')
 										headText='INSERT INTO variants (' + head[0]
-				
+			
 										for h in head[1:]:
 											headText=headText + ',' + h
 										headText=headText + ') VALUES ( '
-			
+		
 									else:
 										values=line.strip('\n').split('\t')
 										command=headText + '\'' + values[0] + '\''
@@ -233,7 +244,7 @@ while go:
 									pos=1
 								con.commit()	
 								con.close()
-	
+
 								os.remove('tmp/variants.txt')
 
 							if ok:
