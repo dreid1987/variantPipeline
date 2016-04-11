@@ -114,18 +114,20 @@ def checkPedFile(pedLocation,vcfLocation): #Go through VCF file and get individ 
 		if line[:2] == '#C':
 			vcfIndivids=line.strip('\n').split('\t')[9:]
 	
-	f=open(pedLocation):
+	f=open(pedLocation)
 	pedString=f.read()
 	
 	for line in open(pedLocation):
 		if line[0]!='#':
 			line=line.split('\t')
 			individFromPed=line[1]
+			
 			pedIndividID=individFromPed.split('-')[1]
+			
 			for vcfIndivid in vcfIndivids:
 				vcfIndividID=vcfIndivid.split('-')[1]
 				if pedIndividID==vcfIndividID:
-					pedString=pedString.replace(pedIndividID,vcfIndividID)
+					pedString=pedString.replace(individFromPed,vcfIndivid)
 	write=open(pedLocation,'w')
 	write.writelines(pedString)
 	write.close()
@@ -209,7 +211,7 @@ while go:
 						if ok:	
 							#Get PED file
 							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile)
-							checkPedFile(pedLocation,family + '/' + family + '.vcf') #Check if individs in vcf == PED. If not, try to rewrite PED based on VCF individs.
+							checkPedFile(pedLocation,'data/' +family + '/' + family + '.vcf') #Check if individs in vcf == PED. If not, try to rewrite PED based on VCF individs.
 						
 						if ok:
 							if not skipEarly:
