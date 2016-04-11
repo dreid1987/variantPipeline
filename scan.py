@@ -6,7 +6,7 @@ import datetime
 import sqlite3 as lite
 
 
-browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/ANENCEPHALY/','/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files.
+browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/ANENCEPHALY/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files.
 genomeLocation='/home/david/py/database/Homo_sapiens/Ensembl/GRCh37/Sequence/WholeGenomeFasta/genome.fa'
 
 
@@ -37,20 +37,24 @@ def convertxlsxToPed(fileIn,fileOut):
 			if buildRow[0][0]!='#':
 				individuals.append(buildRow[1])
 			for column in buildRow[1:]:
-				write.writelines('\t' + column)
+				write.writelines('\t' + column.replace('.0',''))
 			i=1
 		write.close()
 	except IOError: pass
 	return individuals
 def getPedFile(dataFolder,folder,family,logFile):
 	#Convert PED file and get individuals. If there's no PED file, it will try to make one (for trios only).
+	ok=False
 	individuals=convertxlsxToPed(dataFolder + '/family.xlsx', folder + '/' + family+ '.ped')  #See if PED is in family folder
-	pedLocation=folder + '/' +  family + '.ped'
+	if len(individuals)>0:
+		pedLocation=folder + '/' +  family + '.ped'
+		ok=True
 	if len(individuals)==0: #IF no PED...
 		individuals=convertxlsxToPed('peds/' + family + '.xlsx', 'peds/' + family + '.ped') #See if PED is in general PED folder
 		if len(individuals)>0:
 			pedLocation='peds/' + family + '.ped'
-
+			ok=True
+	
 	if len(individuals)==0: #If no PED yet, try to make PED file
 		ok=False
 
@@ -83,6 +87,7 @@ def getPedFile(dataFolder,folder,family,logFile):
 					break
 		if not ok:
 			writeToLog(logFile,dataFolder + ' - No family.xlsx found and no PED file could be generated')
+	
 	return pedLocation,ok
 def writeToLog(logFile,toWrite):
 	r=[]
@@ -103,6 +108,28 @@ def returnTime():
 logFile='logs/log_' + returnTime()
 go=True
 
+def checkPedFile(pedLocation,vcfLocation): #Go through VCF file and get individ IDs. Cross-reference with PED and try to make individ IDs the same.
+	
+	for line in open(vcfLocation):
+		if line[:2] == '#C':
+			vcfIndivids=line.strip('\n').split('\t')[9:]
+	
+	f=open(pedLocation):
+	pedString=f.read()
+	
+	for line in open(pedLocation):
+		if line[0]!='#':
+			line=line.split('\t')
+			individFromPed=line[1]
+			pedIndividID=individFromPed.split('-')[1]
+			for vcfIndivid in vcfIndivids:
+				vcfIndividID=vcfIndivid.split('-')[1]
+				if pedIndividID==vcfIndividID:
+					pedString=pedString.replace(pedIndividID,vcfIndividID)
+	write=open(pedLocation,'w')
+	write.writelines(pedString)
+	write.close()
+	
 while go:
 	for browseFolder in browseFolders:
 		completed=[]
@@ -115,8 +142,9 @@ while go:
 		for folder in folders:
 			
 			if os.path.isdir(browseFolder + folder):
-			
+				
 				family=folder
+				print family
 				dataFolder=browseFolder + folder #This is where data and ped files are stored
 				folder = 'data/' + folder #This is where working files are generated and stored
 				if not os.path.isdir(folder):
@@ -125,7 +153,7 @@ while go:
 			
 				if family not in completed:
 					
-					#Scan through all files, make sure not still copying. If still copying, leave this file for now
+					#Scan through all files, make sure not still copying. If still copying, leave this family for now
 					for i in ['0','1']:
 						vars()['files' + i]=dict()
 						for file in os.listdir(dataFolder):
@@ -181,9 +209,8 @@ while go:
 						if ok:	
 							#Get PED file
 							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile)
-							
+							checkPedFile(pedLocation,family + '/' + family + '.vcf') #Check if individs in vcf == PED. If not, try to rewrite PED based on VCF individs.
 						
-						#TO DO: Check if individs in vcf = PED. If not, try to rewrite PED.
 						if ok:
 							if not skipEarly:
 								zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/  | vt decompose -s - | vt normalize -r ' + genomeLocation + ' - | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
@@ -195,17 +222,22 @@ while go:
 								writeToLog(logFile,tabixCommand)
 								os.system(tabixCommand)
 		
-								os.remove('data/' + family  + '/' +  family  + '.vcf')
-						
-							geminiLoadCommand='gemini load --cores 4 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
+								#os.remove('data/' + family  + '/' +  family  + '.vcf')
+							skipEarly=False
+							if os.path.isfile('db/' +  family  + '.db'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
+								skipEarly=True
+								writeToLog(logFile,'Using previous db file for ' + family)
+							
+							if not skipEarly:
+								geminiLoadCommand='gemini load --cores 4 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
 	
-							writeToLog(logFile,geminiLoadCommand)
-							os.system(geminiLoadCommand + ' > tempOut.txt')
-							#for line in open('tempOut.txt'):
-							#	writeToLog(logFile,line.strip('\n'))
-							if not os.path.isfile('db/'+ family  + '.db'):
-								ok=False
-								writeToLog(logFile,family + ' Gemini load failed')
+								writeToLog(logFile,geminiLoadCommand)
+								os.system(geminiLoadCommand + ' > tempOut.txt')
+								#for line in open('tempOut.txt'):
+								#	writeToLog(logFile,line.strip('\n'))
+								if not os.path.isfile('db/'+ family  + '.db'):
+									ok=False
+									writeToLog(logFile,family + ' Gemini load failed - check ped file')
 							#Filter variants
 							if ok:
 								#If no cutoffs.xlsx, add default
