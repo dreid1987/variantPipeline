@@ -6,7 +6,7 @@ import datetime
 import sqlite3 as lite
 
 
-browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files.
+browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/ANENCEPHALY/','/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
 genomeLocation='/home/david/py/database/Homo_sapiens/Ensembl/GRCh37/Sequence/WholeGenomeFasta/genome.fa'
 
 
@@ -82,7 +82,7 @@ def getPedFile(dataFolder,folder,family,logFile,numBamFiles):
 						writePed.writelines('\n' + family + '\t' + child + '\t' + father + '\t' + mother + '\t' + '-9' + '\t' + '2')
 						writePed.close()
 						ok=True
-						writeToLog(logFile,folder + ' PED file generated for default trio: ' + 'data/' + folder + '/' + family+ '.ped')
+						writeToLog(logFile,'PED file generated for default trio: ' + folder + '/' + family+ '.ped')
 						pedLocation=folder + '/' +  family + '.ped'
 					break
 		if not ok:
@@ -107,7 +107,7 @@ def returnTime():
 	today=datetime.datetime.today()
 	return str(today.year) + '-' + str(today.month) + '-' + str(today.day) + '-' + str(today.hour) + '-' + str(today.minute) + '-' + str(today.second)
 logFile='logs/log_' + returnTime()
-go=True
+
 
 def checkPedFile(pedLocation,vcfLocation): #Go through VCF file and get individ IDs. Cross-reference with PED and try to make individ IDs the same.
 	
@@ -133,7 +133,7 @@ def checkPedFile(pedLocation,vcfLocation): #Go through VCF file and get individ 
 	write.writelines(pedString)
 	write.close()
 	
-while go:
+while True:
 	for browseFolder in browseFolders:
 		completed=[]
 		for line in open('completedRuns.txt'):
@@ -143,24 +143,24 @@ while go:
 		folders=os.listdir(browseFolder)
 	
 		for folder in folders:
+			
 			if folder not in completed:
+				
 				if os.path.isdir(browseFolder + folder):
 				
 					family=folder
-				
+					
 					dataFolder=browseFolder + folder #This is where data and ped files are stored
 					folder = 'data/' + folder #This is where working files are generated and stored
 					if not os.path.isdir(folder):
 						os.mkdir(folder)
-			
-			
-				
-					
+						
+						
 					#Scan through all files, make sure not still copying. If still copying, leave this family for now
 					for i in ['0','1']:
 						vars()['files' + i]=dict()
-						for file in os.listdir(dataFolder):
-							vars()['files' + i][file] = os.path.getsize(dataFolder + '/' + file)
+						for file in os.listdir(dataFolder + '/'):
+							vars()['files' + i][file]=os.path.getsize(dataFolder + '/' + file)
 						time.sleep(2)
 					ok=True
 					for file in files1.keys():
@@ -236,7 +236,7 @@ while go:
 								writeToLog(logFile,'Using previous db file for ' + family)
 							
 							if not skipEarly:
-								geminiLoadCommand='gemini load --cores 4 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
+								geminiLoadCommand='gemini load --cores 2 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
 	
 								writeToLog(logFile,geminiLoadCommand)
 								os.system(geminiLoadCommand + ' > tempOut.txt')
@@ -272,16 +272,16 @@ while go:
 								for line in open('tmp/variants.txt'):
 									if pos==0:
 										head=line.strip('\n').split('\t')
-										headText='INSERT INTO variants (' + head[0]
+										headText='INSERT INTO variants (family_id'
 			
-										for h in head[1:]:
+										for h in head:
 											headText=headText + ',' + h
 										headText=headText + ') VALUES ( '
 		
 									else:
 										values=line.strip('\n').split('\t')
-										command=headText + '\'' + values[0] + '\''
-										for v in values[1:]:
+										command=headText + '\'' + family + '\''
+										for v in values:
 											command = command + ',\'' + v.replace('\'','') + '\''
 										command=command + ');'
 										cur.execute(command)
@@ -301,5 +301,5 @@ while go:
 								writeToLog(logFile,family  + ' completed')
 			
 	
-	time.sleep(100)
+	time.sleep(120)
 
