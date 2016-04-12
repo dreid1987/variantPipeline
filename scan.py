@@ -255,7 +255,11 @@ while go:
 								os.system('gemini comp_hets db/'+ family  + '.db > data/'+ family  + '/' + 'recessiveUnfiltered.txt')
 								os.system('gemini autosomal_dominant db/'+ family  + '.db > data/'+ family  + '/' + 'dominantUnfiltered.txt')
 								os.system('gemini de_novo db/'+ family  + '.db > data/'+ family  + '/' + 'denovoUnfiltered.txt')
-								os.system('python filterVariants.py ' + family)
+								for inheritenceType in ['recessive','dominant','denovo']:
+									#Arguments: family, inFile, outFile,cutoffs
+									#Cutoffs can be a path to a xlsx file OR a ;-separated list of conditionals
+									writeToLog(logFile,'python filterVariants.py ' + family + ' ' + 'data/' + family + '/' + inheritenceType + 'Unfiltered.txt ' + 'data/' + family + '/' + inheritenceType + 'Filtered_' + family + '.tsv ' + 'data/' + family + '/cutoffs.xlsx')
+									os.system('python filterVariants.py ' + family + ' ' + 'data/' + family + '/' + inheritenceType + 'Unfiltered.txt ' + 'data/' + family + '/' + inheritenceType + 'Filtered_' + family + '.tsv ' + 'data/' + family + '/cutoffs.xlsx')
 							
 								#output all annotated variants and add to universal database
 	
@@ -263,6 +267,7 @@ while go:
 								os.system('gemini query -q \"select * from variants\" --header db/' + family + '.db > tmp/variants.txt')
 								pos=0
 								con = lite.connect('db/all.db')
+								writeToLog(logFile,family +' variants being added to database')
 								cur = con.cursor()  
 								for line in open('tmp/variants.txt'):
 									if pos==0:
@@ -283,7 +288,7 @@ while go:
 									pos=1
 								con.commit()	
 								con.close()
-
+								writeToLog(logFile,family +' database addition completed')
 								os.remove('tmp/variants.txt')
 
 							if ok:
