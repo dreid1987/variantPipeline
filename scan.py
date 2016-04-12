@@ -6,7 +6,7 @@ import datetime
 import sqlite3 as lite
 
 
-browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/ANENCEPHALY/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files.
+browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files.
 genomeLocation='/home/david/py/database/Homo_sapiens/Ensembl/GRCh37/Sequence/WholeGenomeFasta/genome.fa'
 
 
@@ -42,7 +42,7 @@ def convertxlsxToPed(fileIn,fileOut):
 		write.close()
 	except IOError: pass
 	return individuals
-def getPedFile(dataFolder,folder,family,logFile):
+def getPedFile(dataFolder,folder,family,logFile,numBamFiles):
 	#Convert PED file and get individuals. If there's no PED file, it will try to make one (for trios only).
 	ok=False
 	individuals=convertxlsxToPed(dataFolder + '/family.xlsx', folder + '/' + family+ '.ped')  #See if PED is in family folder
@@ -59,7 +59,7 @@ def getPedFile(dataFolder,folder,family,logFile):
 		ok=False
 
 		if numBamFiles==3: #Trios only
-			for line in open(folder + '/' +  family + '.vcf'):#find names in VDF file
+			for line in open(folder + '/' +  family + '.vcf'):#find names in VCF file
 
 				if line[:2]=='#C':
 	
@@ -83,10 +83,11 @@ def getPedFile(dataFolder,folder,family,logFile):
 						writePed.close()
 						ok=True
 						writeToLog(logFile,folder + ' PED file generated for default trio: ' + 'data/' + folder + '/' + family+ '.ped')
-		
+						pedLocation=folder + '/' +  family + '.ped'
 					break
 		if not ok:
 			writeToLog(logFile,dataFolder + ' - No family.xlsx found and no PED file could be generated')
+			pedLocation=""
 	
 	return pedLocation,ok
 def writeToLog(logFile,toWrite):
@@ -142,18 +143,18 @@ while go:
 		folders=os.listdir(browseFolder)
 	
 		for folder in folders:
-			
-			if os.path.isdir(browseFolder + folder):
+			if folder not in completed:
+				if os.path.isdir(browseFolder + folder):
 				
-				family=folder
-				print family
-				dataFolder=browseFolder + folder #This is where data and ped files are stored
-				folder = 'data/' + folder #This is where working files are generated and stored
-				if not os.path.isdir(folder):
-					os.mkdir(folder)
+					family=folder
+				
+					dataFolder=browseFolder + folder #This is where data and ped files are stored
+					folder = 'data/' + folder #This is where working files are generated and stored
+					if not os.path.isdir(folder):
+						os.mkdir(folder)
 			
 			
-				if family not in completed:
+				
 					
 					#Scan through all files, make sure not still copying. If still copying, leave this family for now
 					for i in ['0','1']:
@@ -168,29 +169,32 @@ while go:
 								ok=False
 						except KeyError: 
 							ok=False
+							writeToLog(logFile,'Waiting for ' + family + ' files to finish copying')
 					
 					if ok:
+						print family
 						writeToLog(logFile,'Analyzing ' + family + '...')
 						skipEarly=False
 						if os.path.isfile(folder  + '/' +  family  + '.vcf.gz'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
 							skipEarly=True
 							writeToLog(logFile,'Using previous vcf file for ' + family)
 						
-						if not skipEarly:
+						
 							
 			
-							#Check for BAM files. If no BAM files, check for fastq files and map.
-							files = os.listdir(dataFolder)
-							bamFiles=""
-							numBamFiles=0
-							for file in files:
+						#Check for BAM files. If no BAM files, check for fastq files and map.
+						files = os.listdir(dataFolder)
+						bamFiles=""
+						numBamFiles=0
+						for file in files:
 
-								if file.split('.')[-1] == 'bam':
+							if file.split('.')[-1] == 'bam':
 
-									if len(bamFiles)>0:
-										bamFiles= bamFiles + ' '
-									bamFiles = bamFiles + dataFolder + '/' + file
-									numBamFiles+=1
+								if len(bamFiles)>0:
+									bamFiles= bamFiles + ' '
+								bamFiles = bamFiles + dataFolder + '/' + file
+								numBamFiles+=1
+						if not skipEarly:
 							if len(bamFiles)==0:
 								#figure out what mapping parameters Baylor uses. Copy those, make BAM from FASTQ
 								writeToLog(logFile,dataFolder + ' - No bam files found')
@@ -210,10 +214,11 @@ while go:
 								os.system(bcftoolsCommand)
 						if ok:	
 							#Get PED file
-							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile)
-							checkPedFile(pedLocation,'data/' +family + '/' + family + '.vcf') #Check if individs in vcf == PED. If not, try to rewrite PED based on VCF individs.
+							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile,numBamFiles)
+							
 						
 						if ok:
+							checkPedFile(pedLocation,'data/' +family + '/' + family + '.vcf') #Check if individs in vcf == PED. If not, try to rewrite PED based on VCF individs.
 							if not skipEarly:
 								zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/  | vt decompose -s - | vt normalize -r ' + genomeLocation + ' - | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
 								writeToLog(logFile,zlessCommand)
