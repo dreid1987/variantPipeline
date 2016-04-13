@@ -6,7 +6,8 @@ import datetime
 import sqlite3 as lite
 
 
-browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/ANENCEPHALY/','/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
+#browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
+browseFolders=['seqReads/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
 genomeLocation='/home/david/py/database/Homo_sapiens/Ensembl/GRCh37/Sequence/WholeGenomeFasta/genome.fa'
 
 
@@ -132,13 +133,15 @@ def checkPedFile(pedLocation,vcfLocation): #Go through VCF file and get individ 
 	write=open(pedLocation,'w')
 	write.writelines(pedString)
 	write.close()
-	
+def getCompletedRuns():
+	completed=[]
+	for line in open('completedRuns.txt'):
+		if len(line.strip('\n'))>0:
+			completed.append(line.strip('\n'))
+	return completed	
 while True:
 	for browseFolder in browseFolders:
-		completed=[]
-		for line in open('completedRuns.txt'):
-			if len(line.strip('\n'))>0:
-				completed.append(line.strip('\n'))
+		completed=getCompletedRuns()
 	
 		folders=os.listdir(browseFolder)
 	
@@ -162,11 +165,13 @@ while True:
 						for file in os.listdir(dataFolder + '/'):
 							vars()['files' + i][file]=os.path.getsize(dataFolder + '/' + file)
 						time.sleep(2)
+					
 					ok=True
 					for file in files1.keys():
 						try:
 							if files1[file] != files0[file]:
 								ok=False
+								writeToLog(logFile,'Waiting for ' + family + ' files to finish copying')
 						except KeyError: 
 							ok=False
 							writeToLog(logFile,'Waiting for ' + family + ' files to finish copying')
@@ -229,7 +234,7 @@ while True:
 								writeToLog(logFile,tabixCommand)
 								os.system(tabixCommand)
 		
-								#os.remove('data/' + family  + '/' +  family  + '.vcf')
+								
 							skipEarly=False
 							if os.path.isfile('db/' +  family  + '.db'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
 								skipEarly=True
@@ -292,6 +297,7 @@ while True:
 								os.remove('tmp/variants.txt')
 
 							if ok:
+								completed=getCompletedRuns()
 								completed.append(family)
 								writeCompleted = open('completedRuns.txt','w')		
 								for fam in completed:

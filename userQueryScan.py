@@ -75,6 +75,10 @@ def variantFilteringQuery():
 				if len(email)>0:
 					pass
 					#Cannot email on local server... see if Netfriends can help here.
+				completed=[]
+				for line in open(variantFilteringInputFolder + 'completedRuns.txt'):
+					if len(line.strip('\n'))>0:
+						completed.append(line.strip('\n'))
 				completed.append(file)
 				print file
 				writeCompleted = open(variantFilteringInputFolder + 'completedRuns.txt','w')		
@@ -180,7 +184,10 @@ def databaseQuery():
 					p=1
 			con.close()
 			write.close()
-			
+			completed=[]
+			for line in open(databaseQueryInputFolder + 'completedRuns.txt'):
+				if len(line.strip('\n'))>0:
+					completed.append(line.strip('\n'))
 			completed.append(file)
 			print file
 			writeCompleted = open(databaseQueryInputFolder + 'completedRuns.txt','w')		
