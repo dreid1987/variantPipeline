@@ -5,11 +5,15 @@ import xlrd
 import datetime
 import sqlite3 as lite
 
+readDepthCutoff=4
 
 #browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
-browseFolders=['seqReads/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
+browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
 genomeLocation='/home/david/py/database/Homo_sapiens/Ensembl/GRCh37/Sequence/WholeGenomeFasta/genome.fa'
 
+class mdict(dict):
+	def __setitem__(self, key, value):
+		 self.setdefault(key, []).append(value)
 
 def convertxlsxToPed(fileIn,fileOut):
 	individuals=[]
@@ -139,14 +143,270 @@ def getCompletedRuns():
 		if len(line.strip('\n'))>0:
 			completed.append(line.strip('\n'))
 	return completed	
+def getVersionInfo():
+	geminiLoc='~/py/database/GEMINI/'
+	geminiConfigFile=geminiLoc + 'data/gemini-config.yaml'
+	snpEffSummaryLoc='snpEff_summary.html'
+	
+	nextLine=''
+	for line in open snpEffSummaryLoc:
+		if nextLine=='version':
+			version=line.split('pre')[1][1:-2]
+		if nextLine=='genome':
+			genome=line.split('td')[1][1:-2]
+		if nextLine=='date':
+			genome=line.split('td')[1][1:-2]
+		if line.find('td valign=top> <b> Genome </b>')>0:
+			nextLine='genome'
+		elif line.find('td valign=top> <b> Date </b> </td')>0:
+			nextLine='date'
+		elif line.find('td valign=top> <b> SnpEff version </b> </td')>0:
+			nextLine='version'
+		else:
+			nextLine=''
+	
+
+	with open(geminiConfigFile, 'r') as content_file:
+		geminiInfo = content_file.read()
+	geminiInfo='\n#' + geminInfo.replace('\n','')
+	return '#' + date + '\t' + genome + '\t' + version + geminiInfo	
+	
+def selectVariants(pedFile,vcfFile):
+	importantEffects=['SPLICE_SITE_ACCEPTOR','SPLICE_SITE_DONOR','FRAME_SHIFT','NON_SYNONYMOUS_CODING','STOP_GAINED','STOP_LOST','START_LOST','CODON_CHANGE_PLUS_CODON_DELETION','CODON_CHANGE_PLUS_CODON_INSERTION','CODON_CHANGE_PLUS_CODON_INSERTION']
+	
+	def testRecessive(people,isParent,isAffected,isUnaffected,isMother,inList,codename):
+		"""
+		Rules:
+		Parents are hets
+		affecteds are homozygous alternate
+		unaffecteds are not homozygous alternate
+		"""
+		ok=True
+		
+		for person in isParent:
+			if people[person] != 'het':
+				ok=False
+		if ok:
+			for person in isAffected:
+				if people[person] != 'homoAlt':
+					ok=False
+		if ok:		
+			for person in isUnaffected:
+				if people[person]=='homoAlt':
+					ok=False
+		if ok:
+			inList.append(codename)
+		return ok,ok,inList
+	def testDominant(people,isParent,isAffected,isUnaffected,isMother,inList,codename):
+		"""
+		Rules:
+		affecteds are not homozygous reference
+		unaffecteds are homozygous reference
+		>=1 parent is het
+		"""
+		ok=True
+		hetCount=0
+		for person in isParent:
+			if people[person]=='het':
+				hetCount+=1
+		if hetCount==0:
+			ok=False
+		
+		if ok:
+			for person in isAffected:
+				if people[person]=='homoRef':
+					ok=False
+		if ok:
+			for person in isUnaffected:
+				if people[person]!='homoRef':
+					ok=False
+		if ok:
+			
+			inList.append(codename)
+		return ok,ok,inList
+	def testDenovo(people,isParent,isAffected,isUnaffected,isMother,inList,codename):
+		"""
+		Rules:
+		Affecteds are hets
+		Unaffecteds are homo ref
+		Parents are homo ref
+		"""
+		ok=True
+		for person in isAffected:
+			if people[person]=='homoRef':
+				ok=False
+		for person in isUnaffected:
+			if people[person]!='homoRef':
+				ok=False
+		for person in isParent:
+			if people[person]!='homoRef':
+				ok=False
+		if ok:
+			
+			inList.append(codename)
+		return ok,ok,inList
+	def testxlinked(people,isParent,isAffected,isUnaffected,isMother,inList,codename):
+		"""
+		Rules:
+		mother is het
+		affecteds are homozygous alternate
+		"""
+		ok=True
+		for person in isMother:
+			if people[person] != 'het':
+				ok=False
+		if ok:
+			for person in isAffected:
+				if people[person] != 'homoAlt':
+					ok=False
+		
+		if ok:
+			inList.append(codename)
+		return ok,ok,inList
+	def testCompHets(variantDict,isParent):
+		
+		compHets=dict()
+		for gene in variantDict.keys():
+			if len(variantDict[gene])>1: #Check if there are at least 2 hets in affecteds (this dict includes only variants where all affecteds are hets)
+				ok=True
+				foundParents=[]
+				for variant in variantDict[gene]:
+					codename=variant[1]
+					people=variant[0]
+					for person in isParent: #Check that no parent is homoAlt
+						if people[person]=='homoAlt':
+							ok=False
+						if people[person]=='het':
+							foundParents.append(person)
+				
+				#Check that no parent contains ALL of the variants
+				for parent in isParent:
+					count=foundParents.count(parent)
+					if count==len(variantDict[gene]):
+						ok=False
+				if ok:
+					compHets[gene]=variantDict[gene]
+		return compHets
+						
+	isParent=[] #Individs that are parents of an affected individual
+	isAffected=[] 
+	isUnaffected=[] 
+	isMother=[]
+	for line in open(pedFile):
+		if len(line)>3 and line[0] != '#':
+			line=line.strip('\n').split('\t')
+			individ=line[1]
+			if line[5]=='1':
+				isUnaffected.append(individ)
+			
+			if line[5]=='2':
+				isAffected.append(individ)
+				if line[2] not in isParent:
+					isParent.append(line[2])
+				if line[3] not in isParent:
+					isParent.append(line[3])
+					isMother.append(line[3])
+	
+	#Get individ columns
+	colIndivid=dict()
+	
+	for line in open(vcfFile):
+		if line[:2]=='#C':
+			line=line.strip('\n').split('\t')
+			cPos=9
+			for column in line[9:]:
+				colIndivid[cPos]=column
+				cPos+=1
+
+			break
+	
+	
+	#Test each variant
+	recessiveVariants=[]
+	dominantVariants=[]
+	xlinkedVariants=[]
+	denovoVariants=[]
+	
+	variantsInGene=mdict()
+	
+	variantDict=dict()
+	
+	for line in open(vcfFile):
+		if line[0]!='#':
+			
+			people=dict()
+			tooFewReads=False
+			line=line.strip('\n').split('\t')
+			try:
+				
+				readDepth=int(line[7].split('DP=')[1].split(';')[0])
+				
+			except IndexError: readDepth=0
+
+			#if readDepth>=readDepthCutoff:
+			cPos=9
+			for column in line[9:]:
+				
+				genotype=column.split(':')[0]
+				
+				if genotype=='1/1':
+					genotype='homoAlt'
+				elif genotype=='0/1':
+					genotype='het'
+				#else if genotype=='0/0':
+				else:
+					genotype='homoRef'
+				
+				
+				ind=colIndivid[cPos]
+				people[ind]=genotype
+			
+			
+				cPos+=1	
+			
+			codename=line[0] + '.'+	line[1]
+			
+			#Get family descption for output to database
+			familyDescription=''
+			for person in people.keys():
+				familyDescription = familyDescription+ person + ':' + people[person] + ' '
+			
+			variantDict[codename]=familyDescription
+			if not tooFewReads:			
+				variantDetails=line[7]
+				
+				gene=variantDetails.split('EFF=')[1].split('|')[5]
+				if len(gene)>0:
+					for variantType in importantEffects:
+						if variantDetails.find(variantType)>-1:
+							ok=True
+							for person in isAffected:
+								if people[person]!='het': #To be considered for compound het, must be het in all Affecteds.
+									ok=False
+							if ok:	
+								variantsInGene[gene]=(people,codename)
+				
+				if line[0] != 'X':
+					isRecessive,done,recessiveVariants=testRecessive(people,isParent,isAffected,isUnaffected,isMother,recessiveVariants,codename)
+					
+					if not done:
+						isDominant,done,dominantVariants=testDominant(people,isParent,isAffected,isUnaffected,isMother,dominantVariants,codename)
+					if not done:
+						isDenovo,done,denovoVariants=testDenovo(people,isParent,isAffected,isUnaffected,isMother,denovoVariants,codename)
+				if line[0]=='X':
+					isxlinked,done,xlinkedVariants=testxlinked(people,isParent,isAffected,isUnaffected,isMother,xlinkedVariants,codename)
+
+	compHets=testCompHets(variantsInGene,isParent)
+	
+	return recessiveVariants,dominantVariants,xlinkedVariants,denovoVariants,compHets,variantDict
 while True:
 	for browseFolder in browseFolders:
 		completed=getCompletedRuns()
 	
 		folders=os.listdir(browseFolder)
-	
+		
 		for folder in folders:
-			
+			folder='DM739'
 			if folder not in completed:
 				
 				if os.path.isdir(browseFolder + folder):
@@ -205,35 +465,57 @@ while True:
 								writeToLog(logFile,dataFolder + ' - No bam files found')
 								ok=False
 							if len(bamFiles)>0:					
-							
+								#The BAM files we currently get from Baylor are already realigned over INDELS
+								# (see https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_indels_IndelRealigner.php, 
+								#  https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_indels_RealignerTargetCreator.php)
+								#When setting up to use with FASTQ files, add use of these tools 
 								
-								#Generate and annotate VCF file
-					
-								mpileupCommand='samtools mpileup -uf ' + genomeLocation + ' ' + bamFiles  + ' | bcftools view -bvcg - > var.raw.bcf'
-								writeToLog(logFile,mpileupCommand)
-								os.system(mpileupCommand)	
-					
-								bcftoolsCommand='bcftools view var.raw.bcf | vcfutils.pl varFilter -D100 > data/' + family + '/' +  family + '.vcf'
-						
-								writeToLog(logFile,bcftoolsCommand)
-								os.system(bcftoolsCommand)
+								
+								
+								
+								#Generate VCF file
+								gatkCommand='java -jar ~/gatk/gatk-protected/dist/GenomeAnalysisTK.jar -T UnifiedGenotyper'
+								bamFilesList=bamFiles.split(' ')
+								for bamFile in bamFilesList:
+									gatkCommand=gatkCommand + ' -I ' + bamFile
+								gatkCommand = gatkCommand + ' -R ' + genomeLocation
+								gatkCommand = gatkCommand + ' -nct 3 -o ' + family + '/' +  family + '.vcf --output_mode EMIT_ALL_SITES'
+								writeToLog(logFile,gatkCommand)
+								os.system(gatkCommand)
 						if ok:	
 							#Get PED file
 							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile,numBamFiles)
+						
 							
 						
 						if ok:
 							checkPedFile(pedLocation,'data/' +family + '/' + family + '.vcf') #Check if individs in vcf == PED. If not, try to rewrite PED based on VCF individs.
+
+							
 							if not skipEarly:
 								zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/  | vt decompose -s - | vt normalize -r ' + genomeLocation + ' - | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
 								writeToLog(logFile,zlessCommand)
-				
+								
 								os.system(zlessCommand)
-		
+								
+								os.system('cp snpEff_summary.html ' + folder  + '/')
+								writeToLog(logFile,'snpEff_summary.html copied to ' + folder)
+								
 								tabixCommand='tabix -p vcf ' + folder  +  '/' +  family  + '.vcf.gz'
 								writeToLog(logFile,tabixCommand)
 								os.system(tabixCommand)
-		
+							#Extract annotated VCF file
+							gunzipCommand='gunzip -f -k ' + folder  +  '/' +  family  + '.vcf.gz'
+							writeToLog(logFile,gunzipCommand)
+							os.system(gunzipCommand)
+							#Get variants that segregate in each inheritence mode. 
+							recessiveVariants,dominantVariants,xVariants,denovoVariants,compHets,variantDict=selectVariants(pedLocation,'data/' + family + '/' +  family + '.vcf')
+							writeToLog(logFile,'Identified ' + str(len(dominantVariants)) + ' dominant variants, ' + str(len(recessiveVariants)) + ' recessive variants, ' + str(len(xVariants)) + ' X-linked variants, ' + str(len(denovoVariants)) + ' de novo variants, and ' + str(len(compHets.keys())) + ' compound heterozygous variants.')
+							#Get variant codes for variants that are part of compound heterozygotes
+							refCodesToUse=dict()
+							for gene in compHets:
+								for i in compHets[gene]:
+									refCodesToUse[i[1]] = gene
 								
 							skipEarly=False
 							if os.path.isfile('db/' +  family  + '.db'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
@@ -249,7 +531,7 @@ while True:
 								#	writeToLog(logFile,line.strip('\n'))
 								if not os.path.isfile('db/'+ family  + '.db'):
 									ok=False
-									writeToLog(logFile,family + ' Gemini load failed - check ped file')
+									writeToLog(logFile,family + ' Gemini load failed - check family file')
 							#Filter variants
 							if ok:
 								#If no cutoffs.xlsx, add default
@@ -257,23 +539,27 @@ while True:
 									copyfile('database/cutoffs.xlsx', 'data/' + family + '/cutoffs.xlsx')
 					
 								
-								os.system('gemini comp_hets db/'+ family  + '.db > data/'+ family  + '/' + 'recessiveUnfiltered.txt')
-								os.system('gemini autosomal_dominant db/'+ family  + '.db > data/'+ family  + '/' + 'dominantUnfiltered.txt')
-								os.system('gemini de_novo db/'+ family  + '.db > data/'+ family  + '/' + 'denovoUnfiltered.txt')
-								for inheritenceType in ['recessive','dominant','denovo']:
-									#Arguments: family, inFile, outFile,cutoffs
-									#Cutoffs can be a path to a xlsx file OR a ;-separated list of conditionals
-									writeToLog(logFile,'python filterVariants.py ' + family + ' ' + 'data/' + family + '/' + inheritenceType + 'Unfiltered.txt ' + 'data/' + family + '/' + inheritenceType + 'Filtered_' + family + '.tsv ' + 'data/' + family + '/cutoffs.xlsx')
-									os.system('python filterVariants.py ' + family + ' ' + 'data/' + family + '/' + inheritenceType + 'Unfiltered.txt ' + 'data/' + family + '/' + inheritenceType + 'Filtered_' + family + '.tsv ' + 'data/' + family + '/cutoffs.xlsx')
-							
+								
 								#output all annotated variants and add to universal database
 	
 								writeToLog(logFile,family +' variants outputting to tmp/variants.txt')
 								os.system('gemini query -q \"select * from variants\" --header db/' + family + '.db > tmp/variants.txt')
+								
+								
+								#Start unfiltered variant file and print header
+								write=open('data/' + family + '/variantsUnfiltered.txt','w')
+								write.writelines('Inheritence\tFamily members\tGene\t')
+								for line in open('tmp/variants.txt'):
+									write.writelines(line)
+									break
 								pos=0
 								con = lite.connect('db/all.db')
-								writeToLog(logFile,family +' variants being added to database')
+								writeToLog(logFile,family +' variants being added to all.db database')
+								
+								compHetsToWrite=mdict()
+								
 								cur = con.cursor()  
+								foundCodes=[]
 								for line in open('tmp/variants.txt'):
 									if pos==0:
 										head=line.strip('\n').split('\t')
@@ -281,21 +567,60 @@ while True:
 			
 										for h in head:
 											headText=headText + ',' + h
-										headText=headText + ') VALUES ( '
+										headText=headText + ',family_segregation) VALUES ( '
 		
 									else:
 										values=line.strip('\n').split('\t')
+										refCode=values[0].strip('chr') + '.' + str(int(values[1])+1) 
+										if refCode in refCodesToUse.keys():
+											gene=refCodesToUse[refCode]
+											compHetsToWrite[gene]='compHet\t' + variantDict[refCode] + '\t' + gene + '\t' + line
+											foundCodes.append(refCode)
 										command=headText + '\'' + family + '\''
 										for v in values:
 											command = command + ',\'' + v.replace('\'','') + '\''
-										command=command + ');'
-										cur.execute(command)
+										try:
+											command=command + ',\'' + variantDict[refCode] + '\');'
+											
+											cur.execute(command)
+										except KeyError: pass
+										#Make variant code (chr.spot+1.ref.alt)
+										
+										for segregationMode in ('recessive','dominant','x','denovo'):
+											varList=vars()[segregationMode + 'Variants']
+											if refCode in varList: #Check if this variant is in my lists of co-segregating variants
+												write.writelines(segregationMode + '\t' + variantDict[refCode] + '\t' + values[57] + '\t' + line)
+												break
+										
+										
 									pos=1
+								
+								
 								con.commit()	
 								con.close()
+								
+								
+								
+								write.close()
 								writeToLog(logFile,family +' database addition completed')
-								os.remove('tmp/variants.txt')
-
+								
+								filterCommand='python filterVariants.py ' + family + ' ' + 'data/' + family + '/variantsUnfiltered.txt ' + 'data/' + family + '/' +'filtered_' + family + 'Variants.tsv ' + 'data/' + family + '/cutoffs.xlsx'
+								os.system(filterCommand)
+								writeToLog(logFile,filterCommand)
+								with open('data/' + family + '/' +'filtered_' + family + 'Variants.tsv', 'r') as content_file:
+									content = content_file.read()
+								write=open('data/' + family + '/' +'filtered_' + family + 'Variants.tsv','w')
+								#write log info here
+								versionHeader=getVersionInfo()
+								write.writelines(versionHeader)
+								write.writelines(content)
+								for gene in compHetsToWrite.keys():
+									for variant in compHetsToWrite[gene]:
+										write.writelines(variant)
+											
+								
+								#os.remove('tmp/variants.txt')
+							
 							if ok:
 								completed=getCompletedRuns()
 								completed.append(family)
@@ -306,6 +631,6 @@ while True:
 								print family  +' completed'
 								writeToLog(logFile,family  + ' completed')
 			
-	
+							
 	time.sleep(120)
 
