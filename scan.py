@@ -343,24 +343,30 @@ def selectVariants(pedFile,vcfFile):
 				
 			except IndexError: readDepth=0
 
-			#if readDepth>=readDepthCutoff:
+			
 			cPos=9
 			for column in line[9:]:
+				column=column.split(':')
+				dp=int(column[2])
+				if dp<readDepthCutoff:
+					tooFewReads=True
+				if len(column)>1:
 				
-				genotype=column.split(':')[0]
+					genotype=column[0]
 				
-				if genotype=='1/1':
-					genotype='homoAlt'
-				elif genotype=='0/1':
-					genotype='het'
-				#else if genotype=='0/0':
+					if genotype=='1/1':
+						genotype='homoAlt'
+					elif genotype=='0/1':
+						genotype='het'
+					elif genotype=='0/0':
+						genotype='homoRef'
+				
+					if genotype in ['homoAlt','het','homoRef':]
+						ind=colIndivid[cPos]
+						people[ind]=genotype
+						tooFewReads=True
 				else:
-					genotype='homoRef'
-				
-				
-				ind=colIndivid[cPos]
-				people[ind]=genotype
-			
+					tooFewReads=True
 			
 				cPos+=1	
 			
