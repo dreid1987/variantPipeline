@@ -149,7 +149,7 @@ def getVersionInfo():
 	snpEffSummaryLoc='snpEff_summary.html'
 	
 	nextLine=''
-	for line in open snpEffSummaryLoc:
+	for line in open (snpEffSummaryLoc,'r'):
 		if nextLine=='version':
 			version=line.split('pre')[1][1:-2]
 		if nextLine=='genome':
@@ -347,26 +347,27 @@ def selectVariants(pedFile,vcfFile):
 			cPos=9
 			for column in line[9:]:
 				column=column.split(':')
+				
+				
 				dp=int(column[2])
 				if dp<readDepthCutoff:
 					tooFewReads=True
-				if len(column)>1:
-				
-					genotype=column[0]
-				
-					if genotype=='1/1':
-						genotype='homoAlt'
-					elif genotype=='0/1':
-						genotype='het'
-					elif genotype=='0/0':
-						genotype='homoRef'
-				
-					if genotype in ['homoAlt','het','homoRef':]
-						ind=colIndivid[cPos]
-						people[ind]=genotype
-						tooFewReads=True
+					
+				genotype=column[0]
+			
+				if genotype=='1/1':
+					genotype='homoAlt'
+				elif genotype=='0/1':
+					genotype='het'
+				elif genotype=='0/0':
+					genotype='homoRef'
 				else:
 					tooFewReads=True
+				if genotype in ['homoAlt','het','homoRef']:
+					ind=colIndivid[cPos]
+					people[ind]=genotype
+						
+				
 			
 				cPos+=1	
 			
@@ -416,7 +417,7 @@ while True:
 			if folder not in completed:
 				
 				if os.path.isdir(browseFolder + folder):
-				
+					
 					family=folder
 					
 					dataFolder=browseFolder + folder #This is where data and ped files are stored
@@ -443,7 +444,7 @@ while True:
 							writeToLog(logFile,'Waiting for ' + family + ' files to finish copying')
 					
 					if ok:
-						print family
+						#print family
 						writeToLog(logFile,'Analyzing ' + family + '...')
 						skipEarly=False
 						if os.path.isfile(folder  + '/' +  family  + '.vcf.gz'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
@@ -485,7 +486,7 @@ while True:
 								for bamFile in bamFilesList:
 									gatkCommand=gatkCommand + ' -I ' + bamFile
 								gatkCommand = gatkCommand + ' -R ' + genomeLocation
-								gatkCommand = gatkCommand + ' -nct 3 -o ' + family + '/' +  family + '.vcf --output_mode EMIT_ALL_SITES'
+								gatkCommand = gatkCommand + ' -nct 3 -o data/' + family + '/' +  family + '.vcf --output_mode EMIT_VARIANTS_ONLY'
 								writeToLog(logFile,gatkCommand)
 								os.system(gatkCommand)
 						if ok:	
@@ -634,7 +635,7 @@ while True:
 								for fam in completed:
 									writeCompleted.writelines('\n' + fam)
 								writeCompleted.close()
-								print family  +' completed'
+								#print family  +' completed'
 								writeToLog(logFile,family  + ' completed')
 			
 							
