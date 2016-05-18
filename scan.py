@@ -7,8 +7,11 @@ import sqlite3 as lite
 
 readDepthCutoff=4
 
+java7Location='/usr/lib/jvm/jre1.7.0/jre1.7.0_79/bin/java'
+
 #browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
-browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
+#browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
+browseFolders=['bams/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
 genomeLocation='/home/david/py/database/Homo_sapiens/Ensembl/GRCh37/Sequence/WholeGenomeFasta/genome.fa'
 
 class mdict(dict):
@@ -407,15 +410,15 @@ def selectVariants(pedFile,vcfFile):
 	
 	return recessiveVariants,dominantVariants,xlinkedVariants,denovoVariants,compHets,variantDict
 while True:
+	
 	for browseFolder in browseFolders:
 		completed=getCompletedRuns()
 	
 		folders=os.listdir(browseFolder)
 		
 		for folder in folders:
-			folder='DM739'
 			if folder not in completed:
-				
+				filesToDelete=[]
 				if os.path.isdir(browseFolder + folder):
 					
 					family=folder
@@ -453,20 +456,34 @@ while True:
 						
 						
 							
-			
-						#Check for BAM files. If no BAM files, check for fastq files and map.
-						files = os.listdir(dataFolder)
-						bamFiles=""
-						numBamFiles=0
-						for file in files:
-
-							if file.split('.')[-1] == 'bam':
-
-								if len(bamFiles)>0:
-									bamFiles= bamFiles + ' '
-								bamFiles = bamFiles + dataFolder + '/' + file
-								numBamFiles+=1
 						if not skipEarly:
+							#Check for BAM files. If no BAM files, check for fastq files and map.
+						
+							files = os.listdir(dataFolder)
+							bamFiles=""
+							numBamFiles=0
+							for file in files:
+
+								if file.split('.')[-1] == 'bam':
+
+									if len(bamFiles)>0:
+										bamFiles= bamFiles + ' '
+									#Check if sorted. If not, sort.
+									samtoolsCheckCommand='samtools view -H ' + dataFolder + '/' + file + ' > tmp/samt.txt'
+									os.system(lsamtoolsCheckCommand)
+									for line in open('tmp/samt.txt'):
+										if line.strip('\n').split(':')[-1]=='coordinate':
+											bamFiles = bamFiles + dataFolder + '/' + file
+										else:
+											samtoolsSortCommand='samtools sort ' + dataFolder + '/' + file + ' tmp/' + file'
+											writeToLog(logFile,samtoolsSortCommand)
+											os.system(samtoolsSortCommand)
+											filesToDelete=append('tmp/' + file)
+											bamFiles = bamFiles + 'tmp/' + file
+										break
+									
+									numBamFiles+=1
+						
 							if len(bamFiles)==0:
 								#figure out what mapping parameters Baylor uses. Copy those, make BAM from FASTQ
 								writeToLog(logFile,dataFolder + ' - No bam files found')
@@ -481,7 +498,7 @@ while True:
 								
 								
 								#Generate VCF file
-								gatkCommand='java -jar ~/gatk/gatk-protected/dist/GenomeAnalysisTK.jar -T UnifiedGenotyper'
+								gatkCommand=java7Location + ' -jar ~/gatk/gatk-protected/dist/GenomeAnalysisTK.jar -T UnifiedGenotyper'
 								bamFilesList=bamFiles.split(' ')
 								for bamFile in bamFilesList:
 									gatkCommand=gatkCommand + ' -I ' + bamFile
@@ -500,7 +517,8 @@ while True:
 
 							
 							if not skipEarly:
-								zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/  | vt decompose -s - | vt normalize -r ' + genomeLocation + ' - | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
+								#zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/  | vt decompose -s - | vt normalize -r ' + genomeLocation + ' - | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
+								zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/ | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
 								writeToLog(logFile,zlessCommand)
 								
 								os.system(zlessCommand)
@@ -530,7 +548,7 @@ while True:
 								writeToLog(logFile,'Using previous db file for ' + family)
 							
 							if not skipEarly:
-								geminiLoadCommand='gemini load --cores 2 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
+								#geminiLoadCommand='gemini load --cores 2 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
 	
 								writeToLog(logFile,geminiLoadCommand)
 								os.system(geminiLoadCommand + ' > tempOut.txt')
@@ -637,7 +655,8 @@ while True:
 								writeCompleted.close()
 								#print family  +' completed'
 								writeToLog(logFile,family  + ' completed')
-			
+				for file in filesToDelete:
+					os.remove(file)
 							
 	time.sleep(120)
 
