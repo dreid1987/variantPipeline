@@ -7,7 +7,7 @@ import sqlite3 as lite
 
 readDepthCutoff=4
 
-java7Location='/usr/lib/jvm/jre1.7.0/jre1.7.0_79/bin/java'
+java7Location='/usr/lib/jvm/jre1.7.0_79/bin/java'
 
 #browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
 #browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
@@ -50,7 +50,7 @@ def convertxlsxToPed(fileIn,fileOut):
 		write.close()
 	except IOError: pass
 	return individuals
-def getPedFile(dataFolder,folder,family,logFile,numBamFiles):
+def getPedFile(dataFolder,folder,family,logFile):
 	#Convert PED file and get individuals. If there's no PED file, it will try to make one (for trios only).
 	ok=False
 	individuals=convertxlsxToPed(dataFolder + '/family.xlsx', folder + '/' + family+ '.ped')  #See if PED is in family folder
@@ -66,7 +66,7 @@ def getPedFile(dataFolder,folder,family,logFile,numBamFiles):
 	if len(individuals)==0: #If no PED yet, try to make PED file
 		ok=False
 
-		if numBamFiles==3: #Trios only
+		if len(individs=line.strip('\n').split('\t')[9:])==3: #Trios only
 			for line in open(folder + '/' +  family + '.vcf'):#find names in VCF file
 
 				if line[:2]=='#C':
@@ -109,7 +109,7 @@ def writeToLog(logFile,toWrite):
 		w.writelines(i)
 	w.writelines('\n' + toWrite + '\t' + returnTime())
 	w.close()
-
+	print toWrite
 def returnTime():
 	
 	today=datetime.datetime.today()
@@ -134,7 +134,13 @@ def checkPedFile(pedLocation,vcfLocation): #Go through VCF file and get individ 
 			pedIndividID=individFromPed.split('-')[1]
 			
 			for vcfIndivid in vcfIndivids:
-				vcfIndividID=vcfIndivid.split('-')[1]
+				if vcfIndivid.find('-')>-1:
+					vcfIndividID=vcfIndivid.split('-')[1]
+				elif vcfIndivid.find('_')>-1:
+
+					vcfIndividID=vcfIndivid.split('_')[1]
+				else:
+					vcfIndividID=vcfIndivid
 				if pedIndividID==vcfIndividID:
 					pedString=pedString.replace(individFromPed,vcfIndivid)
 	write=open(pedLocation,'w')
@@ -304,9 +310,9 @@ def selectVariants(pedFile,vcfFile):
 			
 			if line[5]=='2':
 				isAffected.append(individ)
-				if line[2] not in isParent:
+				if line[2] not in isParent and line[2] != '-9':
 					isParent.append(line[2])
-				if line[3] not in isParent:
+				if line[3] not in isParent and line[3] != '-9':
 					isParent.append(line[3])
 					isMother.append(line[3])
 	
@@ -351,11 +357,12 @@ def selectVariants(pedFile,vcfFile):
 			for column in line[9:]:
 				column=column.split(':')
 				
-				
-				dp=int(column[2])
-				if dp<readDepthCutoff:
+				try:
+					dp=int(column[2])
+					if dp<readDepthCutoff:
+						tooFewReads=True
+				except IndexError:
 					tooFewReads=True
-					
 				genotype=column[0]
 			
 				if genotype=='1/1':
@@ -422,7 +429,7 @@ while True:
 				if os.path.isdir(browseFolder + folder):
 					
 					family=folder
-					
+					hasWriteAccess=os.access(browseFolder + folder, os.W_OK)
 					dataFolder=browseFolder + folder #This is where data and ped files are stored
 					folder = 'data/' + folder #This is where working files are generated and stored
 					if not os.path.isdir(folder):
@@ -450,7 +457,7 @@ while True:
 						#print family
 						writeToLog(logFile,'Analyzing ' + family + '...')
 						skipEarly=False
-						if os.path.isfile(folder  + '/' +  family  + '.vcf.gz'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
+						if os.path.isfile(folder  + '/' +  family  + '.vcf'): #If vcf file is already generated, use that. If you don't want to use the old file, delete it.
 							skipEarly=True
 							writeToLog(logFile,'Using previous vcf file for ' + family)
 						
@@ -465,22 +472,60 @@ while True:
 							for file in files:
 
 								if file.split('.')[-1] == 'bam':
-
+									#The BAM files we currently get from Baylor are already realigned over INDELS
+								# (see https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_indels_IndelRealigner.php, 
+								#  https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_indels_RealignerTargetCreator.php)
+								#When setting up to use with FASTQ files, add use of these tools 
+									
+									folderToUse=dataFolder + '/' #Folder where bam/bai will be sorted
+													#If already indexed, leave in place.
+													#If not indexed but writeable, write in place
+													#Otherwise, copy to tmp/
+									needToCopy=False
+									
 									if len(bamFiles)>0:
 										bamFiles= bamFiles + ' '
 									#Check if sorted. If not, sort.
 									samtoolsCheckCommand='samtools view -H ' + dataFolder + '/' + file + ' > tmp/samt.txt'
-									os.system(lsamtoolsCheckCommand)
+									os.system(samtoolsCheckCommand)
+																		
 									for line in open('tmp/samt.txt'):
-										if line.strip('\n').split(':')[-1]=='coordinate':
-											bamFiles = bamFiles + dataFolder + '/' + file
-										else:
-											samtoolsSortCommand='samtools sort ' + dataFolder + '/' + file + ' tmp/' + file'
+										
+										if line.strip('\n').split(':')[-1]!='coordinate':
+											
+											if not hasWriteAccess:
+												needToCopy=True
+												folderToUse='tmp/'
+												shutil.copy(dataFolder + '/' + file,'tmp/')
+												needToCopy=True
+												filesToDelete=append('tmp/' + file)
+												filesToDelete=append('tmp/' + file + '.bai')
+											samtoolsSortCommand='samtools sort ' + dataFolder + '/' + file + ' ' + folderToUse + file
 											writeToLog(logFile,samtoolsSortCommand)
 											os.system(samtoolsSortCommand)
-											filesToDelete=append('tmp/' + file)
-											bamFiles = bamFiles + 'tmp/' + file
+										else:
+											writeToLog(logFile,file + ' already sorted')	
 										break
+									
+									#Check if index file exists. If yes, do nothing. Else, make index file either in work folder (if write access) or in tmp 
+									if os.path.isfile(dataFolder + '/' + file + '.bai') and needToCopy:
+										shutil.copy(dataFolder + '/' + file + '.bai','tmp/')
+									if not os.path.isfile(dataFolder + '/' + file + '.bai'):
+										samtoolsIndexCommand='samtools index '
+										if not os.access(folderToUse, os.W_OK):
+											needToCopy=True
+											shutil.copy(dataFolder + '/' + file,'tmp/')
+											folderToUse='tmp/'
+										samtoolsIndexCommand=samtoolsIndexCommand + folderToUse + file
+										
+										writeToLog(logFile,samtoolsIndexCommand)
+										os.system(samtoolsIndexCommand)
+									else:
+										writeToLog(logFile,file + ' already indexed')	
+									if needToCopy:
+										writeToLog(logFile,'No write access for ' + file + ': will be processed locally in tmp/')	
+									bamFiles = bamFiles + folderToUse + file
+									
 									
 									numBamFiles+=1
 						
@@ -489,10 +534,7 @@ while True:
 								writeToLog(logFile,dataFolder + ' - No bam files found')
 								ok=False
 							if len(bamFiles)>0:					
-								#The BAM files we currently get from Baylor are already realigned over INDELS
-								# (see https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_indels_IndelRealigner.php, 
-								#  https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_indels_RealignerTargetCreator.php)
-								#When setting up to use with FASTQ files, add use of these tools 
+								
 								
 								
 								
@@ -506,16 +548,20 @@ while True:
 								gatkCommand = gatkCommand + ' -nct 3 -o data/' + family + '/' +  family + '.vcf --output_mode EMIT_VARIANTS_ONLY'
 								writeToLog(logFile,gatkCommand)
 								os.system(gatkCommand)
+						
+							
 						if ok:	
 							#Get PED file
-							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile,numBamFiles)
+							pedLocation,ok=getPedFile(dataFolder,folder,family,logFile)
 						
 							
 						
 						if ok:
 							checkPedFile(pedLocation,'data/' +family + '/' + family + '.vcf') #Check if individs in vcf == PED. If not, try to rewrite PED based on VCF individs.
 
-							
+							skipEarly=False
+							if os.path.isfile('data/' + family + '/' +  family + '.vcf.gz'):
+								skipEarly=True
 							if not skipEarly:
 								#zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/  | vt decompose -s - | vt normalize -r ' + genomeLocation + ' - | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
 								zlessCommand= 'zless ' + folder  + '/' +  family  + '.vcf | sed s/ID=AD,Number=./ID=AD,Number=R/ | java -Xmx4G -jar snpEff.jar GRCh37.75 -formatEff -classic | bgzip -c > data/' + family + '/' +  family +  '.vcf.gz'
@@ -548,12 +594,12 @@ while True:
 								writeToLog(logFile,'Using previous db file for ' + family)
 							
 							if not skipEarly:
-								#geminiLoadCommand='gemini load --cores 2 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
+								geminiLoadCommand='gemini load --cores 2 -v ' + folder  + '/' +  family  + '.vcf.gz -t snpEff -p ' + pedLocation + ' db/' + family  + '.db'
 	
 								writeToLog(logFile,geminiLoadCommand)
-								os.system(geminiLoadCommand + ' > tempOut.txt')
-								#for line in open('tempOut.txt'):
-								#	writeToLog(logFile,line.strip('\n'))
+								os.system(geminiLoadCommand)
+								
+								
 								if not os.path.isfile('db/'+ family  + '.db'):
 									ok=False
 									writeToLog(logFile,family + ' Gemini load failed - check family file')
