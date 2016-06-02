@@ -5,6 +5,7 @@ import os
 import xlrd
 import sys
 
+
 family = sys.argv[1]
 
 variantFile=sys.argv[2]
@@ -34,7 +35,8 @@ if cutoffFile.find('.xlsx')>0:#If cutoffs are an excel file...
 			except IndexError: pass
 		if len(buildRow)>0 and len(buildRow[0])>0 and buildRow[0][0]!='#':
 			buildRow=buildRow[:3]
-			cutoffs.append(buildRow)
+			if buildRow[0]!='-':
+				cutoffs.append(buildRow)
 	
 else: 
 	cutoffList=cutoffFile.split(';')
@@ -139,14 +141,16 @@ for line in open(variantFile):
 
 	if len(line)>2 and line[:5] != 'chrom':
 		var=line.strip('\n').split('\t')
-	
+		
 		allOk=True
 		for cutoff in cutoffs:
 			ok=getConditional(var[cutoff[0]],cutoff[2],cutoff[1])
 			if not ok:
 				allOk=False
+		
 		if allOk:	
 			write.writelines(line)
+				
 	
 
 write.close()		

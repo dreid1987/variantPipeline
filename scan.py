@@ -7,11 +7,13 @@ import sqlite3 as lite
 
 readDepthCutoff=4
 
+skipDatabase=True
+
 java7Location='/usr/lib/jvm/jre1.7.0_79/bin/java'
 
 #browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
-#browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
-browseFolders=['bams/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
+browseFolders=['/home/david/nksequencer/taskforce/Baylor_Exome_trio_data/ANENCEPHALY/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
+#browseFolders=['bams/'] #Where data is stored. Inside this folder, have a bunch of folders named for the family. Inside these, have BAM files. Includ a slash at the end.
 genomeLocation='/home/david/py/database/Homo_sapiens/Ensembl/GRCh37/Sequence/WholeGenomeFasta/genome.fa'
 
 class mdict(dict):
@@ -153,7 +155,7 @@ def getCompletedRuns():
 			completed.append(line.strip('\n'))
 	return completed	
 def getVersionInfo():
-	geminiLoc='~/py/database/GEMINI/'
+	geminiLoc='/home/david/py/database/GEMINI/'
 	geminiConfigFile=geminiLoc + 'data/gemini-config.yaml'
 	snpEffSummaryLoc='snpEff_summary.html'
 	
@@ -164,7 +166,7 @@ def getVersionInfo():
 		if nextLine=='genome':
 			genome=line.split('td')[1][1:-2]
 		if nextLine=='date':
-			genome=line.split('td')[1][1:-2]
+			date=line.split('td')[1][1:-2]
 		if line.find('td valign=top> <b> Genome </b>')>0:
 			nextLine='genome'
 		elif line.find('td valign=top> <b> Date </b> </td')>0:
@@ -177,7 +179,7 @@ def getVersionInfo():
 
 	with open(geminiConfigFile, 'r') as content_file:
 		geminiInfo = content_file.read()
-	geminiInfo='\n#' + geminInfo.replace('\n','')
+	geminiInfo='\n#' + geminiInfo.replace('\n','')
 	return '#' + date + '\t' + genome + '\t' + version + geminiInfo	
 	
 def selectVariants(pedFile,vcfFile):
@@ -296,7 +298,9 @@ def selectVariants(pedFile,vcfFile):
 				if ok:
 					compHets[gene]=variantDict[gene]
 		return compHets
-						
+	for line in open(vcfFile):
+		if line[:2] == '#C':
+			vcfIndivids=line.strip('\n').split('\t')[9:]					
 	isParent=[] #Individs that are parents of an affected individual
 	isAffected=[] 
 	isUnaffected=[] 
@@ -305,16 +309,19 @@ def selectVariants(pedFile,vcfFile):
 		if len(line)>3 and line[0] != '#':
 			line=line.strip('\n').split('\t')
 			individ=line[1]
-			if line[5]=='1':
-				isUnaffected.append(individ)
+			if individ in vcfIndivids:
+				if line[5]=='1':
+					isUnaffected.append(individ)
 			
-			if line[5]=='2':
-				isAffected.append(individ)
-				if line[2] not in isParent and line[2] != '-9':
-					isParent.append(line[2])
-				if line[3] not in isParent and line[3] != '-9':
-					isParent.append(line[3])
-					isMother.append(line[3])
+				if line[5]=='2':
+					isAffected.append(individ)
+					if line[2] not in isParent and line[2] != '-9':
+						isParent.append(line[2])
+					if line[3] not in isParent and line[3] != '-9':
+						isParent.append(line[3])
+						isMother.append(line[3])
+			else:
+				writeToLog(logFile,'WARNING: ' + individ + ' not found in VCF file')
 	
 	#Get individ columns
 	colIndivid=dict()
@@ -419,16 +426,21 @@ def selectVariants(pedFile,vcfFile):
 while True:
 	
 	for browseFolder in browseFolders:
+		if browseFolder[-1] != '/':
+			browseFolder = browseFolder + '/'
 		completed=getCompletedRuns()
 	
 		folders=os.listdir(browseFolder)
 		
 		for folder in folders:
+			
 			if folder not in completed:
+				
 				filesToDelete=[]
 				if os.path.isdir(browseFolder + folder):
 					
 					family=folder
+					
 					hasWriteAccess=os.access(browseFolder + folder, os.W_OK)
 					dataFolder=browseFolder + folder #This is where data and ped files are stored
 					folder = 'data/' + folder #This is where working files are generated and stored
@@ -629,7 +641,8 @@ while True:
 								
 								compHetsToWrite=mdict()
 								
-								cur = con.cursor()  
+								if not skipDatabase:
+									cur = con.cursor()  
 								foundCodes=[]
 								for line in open('tmp/variants.txt'):
 									if pos==0:
@@ -648,13 +661,14 @@ while True:
 											compHetsToWrite[gene]='compHet\t' + variantDict[refCode] + '\t' + gene + '\t' + line
 											foundCodes.append(refCode)
 										command=headText + '\'' + family + '\''
-										for v in values:
-											command = command + ',\'' + v.replace('\'','') + '\''
-										try:
-											command=command + ',\'' + variantDict[refCode] + '\');'
+										if not skipDatabase:
+											for v in values:
+												command = command + ',\'' + v.replace('\'','') + '\''
+											try:
+												command=command + ',\'' + variantDict[refCode] + '\');'
 											
-											cur.execute(command)
-										except KeyError: pass
+												cur.execute(command)
+											except KeyError: pass
 										#Make variant code (chr.spot+1.ref.alt)
 										
 										for segregationMode in ('recessive','dominant','x','denovo'):
@@ -666,9 +680,9 @@ while True:
 										
 									pos=1
 								
-								
-								con.commit()	
-								con.close()
+								if not skipDatabase:
+									con.commit()	
+									con.close()
 								
 								
 								
@@ -705,4 +719,5 @@ while True:
 					os.remove(file)
 							
 	time.sleep(120)
+	print 'sleep'
 
